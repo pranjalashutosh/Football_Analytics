@@ -1,0 +1,7 @@
+Flask
+flask-cors
+psycopg2-binary
+python-dotenv
+google-genai==1.7.0
+pandas
+requests

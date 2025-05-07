@@ -38,9 +38,13 @@ JSON:
 
 CODE_TMPL = """
 You are a Python developer using Plotly Express.
-Generate only the Python code (no markdown fences, no explanations) that creats a chart from the given spec. The code must define a Plotly Express figure object named fig.
-The DataFrame is available as `df`.
-Use color palletes that are compatible with the plotly version installed 6.0.1.
+Generate only the Python code (no markdown fences, no explanations) that creats a chart from the given spec. 
+Important instructions:
+- Only use standard Plotly Express functions (px.line, px.bar, etc.).
+- Do not add manual trace properties like `yshift`, `xshift`, or any `go.Scatter` extras.
+- The code must define a figure named `fig`.
+- The DataFrame is available as `df`.
+- Use color palletes that are compatible with the plotly version installed 6.0.1.
 Spec:
 {spec_json}
 """

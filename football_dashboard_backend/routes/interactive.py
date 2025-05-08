@@ -3,6 +3,7 @@ import os
 import json
 import hashlib
 import traceback
+import time
 
 from flask import Blueprint, request, jsonify, current_app
 from services.gemini_unified import (
@@ -22,6 +23,7 @@ PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
 def interactive():
     # 1. Validate input
     print("🔥  /interactive/ hit with payload:", request.json)
+    start = time.time()
     user_query = request.json.get("nl")
     if not user_query:
         return jsonify({"error": "Missing 'nl' in request body"}), 400
@@ -39,12 +41,17 @@ def interactive():
     try:
         # 2. Fetch data + Vega-Lite spec from Gemini
         data, spec = get_data_and_chart_spec(user_query)
+        print("LLM retriving data+spec:", time.time() - start)
 
         # 3. Generate Plotly Express Python code
+        t1 = time.time()
         plotly_code = generate_code(spec)
+        print("LLM Code Generation time:", time.time() - t1)
 
         # 4. Execute that code on the server to produce Plotly JSON
+        t2 = time.time()
         plotly_json = execute_plotly_code(data, plotly_code)
+        print("LLM code execution time:", time.time() - t2)
 
         # 5. Return everything to the frontend
         resp = {

@@ -45,6 +45,10 @@ You are a Python developer using Plotly Express.
 Generate only the Python code (no markdown fences, no explanations) that creats a chart from the given spec. 
 - The code must define a figure named `fig`.
 - The DataFrame is available as `df`.
+- `px` (plotly.express) is already imported and available.
+- Do not import any modules.
+- Do not define functions or classes.
+- Use concise, single-pass code.
 
 Spec:
 {spec_json}
@@ -127,29 +131,33 @@ def get_data_and_chart_spec(question: str) -> tuple:
 
 #+++++++++++++++++++++++++++++++++++++
 def get_data_and_chart_spec(question: str) -> tuple[list[dict], dict]:
-    prompt = DATA_VIZ_TMPL.format(question=question)
-    config = types.GenerateContentConfig(temperature=0.2)
+	prompt = DATA_VIZ_TMPL.format(question=question)
+	config = types.GenerateContentConfig(temperature=0.2, response_mime_type="application/json")
 
-    # === wrap prompt in a list! ===
-    response = _safe_generate(
-        model="gemini-2.5-pro-exp-03-25",
-        config=config,
-        contents=[prompt],
-    )
+	# === wrap prompt in a list! ===
+	response = _safe_generate(
+		model="gemini-2.5-pro-preview-03-25",
+		config=config,
+		contents=[prompt],
+	)
 
-    # === guard against None.text ===
-    raw = response.text
-    if not raw:
-        raise RuntimeError(
-            "Empty response from Gemini – check your API key, quota, or contents format"
-        )
+	# === guard against None.text ===
+	raw = response.text or ""
+	if not raw.strip():
+		raise RuntimeError(
+			"Empty response from Gemini – check your API key, quota, or contents format"
+		)
 
-    # strip fences and parse JSON
-    raw = raw.strip().strip("```json").strip("```").strip()
-    parsed = json.loads(raw)
+	# Prefer JSON from candidates if present
+	try:
+		parsed = json.loads(raw)
+	except json.JSONDecodeError:
+		# fallback: strip potential fences and retry
+		raw2 = raw.strip().strip("```json").strip("```").strip()
+		parsed = json.loads(raw2)
 
-    data, spec = _validate_data_and_spec(parsed)
-    return data, spec
+	data, spec = _validate_data_and_spec(parsed)
+	return data, spec
 #+++++++++++++++++++++++++++++++++++++
 
 """
@@ -190,6 +198,7 @@ def generate_code(spec: dict) -> str:
     )
 
     raw = response.text
+    print(raw)
     if not raw:
         raise RuntimeError("Empty code response from Gemini")
 
@@ -210,61 +219,97 @@ def generate_code(spec: dict) -> str:
 
 
 def execute_plotly_code(data, code: str) -> str:
-    raw_code = _strip_fences(code.strip())
+	raw_code = _strip_fences(code.strip())
 
-    # universal palette fallback
-    raw_code = re.sub(
-        r'px\.colors\.qualitative\.[A-Za-z0-9_]+',
-        'px.colors.qualitative.Plotly',
-        raw_code
-    )
+	# remove any harmless import/from lines (LLM sometimes adds them)
+	_cleaned_lines = []
+	for _line in raw_code.splitlines():
+		if re.match(r"^\s*(import|from)\s+", _line):
+			continue
+		_cleaned_lines.append(_line)
+	raw_code = "\n".join(_cleaned_lines)
 
-    df = pd.DataFrame(data)
-    local_vars = {'df': df, 'px': px}
+	print("[exec] plotly code length:", len(raw_code))
+	print("[exec] plotly code preview:\n", raw_code[:300])
 
-    try:
-        exec(raw_code, {}, local_vars)
+	# quick size limit to avoid huge payloads
+	if len(raw_code) > 5000:
+		raise ValueError("Generated code too long")
 
-    except TypeError as e:
-        err = str(e)
+	# denylist of dangerous patterns (log but do not block; builtins are restricted)
+	_denied = re.compile(
+		r"\b(__import__|open\(|exec\(|eval\(|compile\(|input\(|os\.|sys\.|subprocess\.|socket\.|shutil\.|pathlib\.|pickle\.|builtins\.|globals\(|locals\(|setattr\(|getattr\(|delattr\(|__\w+__|class\s)",
+		re.IGNORECASE,
+	)
+	m = _denied.search(raw_code)
+	if m:
+		print("[exec] denied token observed:", m.group(0))
+		# do not raise; rely on restricted builtins to sandbox
 
-        # 1) marker_size fallback (from before)
-        if "marker_size" in err:
-            fixed = re.sub(
-                r'marker_size\s*=\s*([^,\)\s]+)',
-                r'marker=dict(size=\1)',
-                raw_code
-            )
-            exec(fixed, {}, local_vars)
-        
-        # 2) xbins fallback
-        elif "xbins" in err:
-            # strip out any xbins={...}
-            stripped = re.sub(
-                r',?\s*xbins\s*=\s*\{[^}]*\}',
-                '',
-                raw_code
-            )
-            exec(stripped, {}, local_vars)
+	# universal palette fallback
+	raw_code = re.sub(
+		r'px\.colors\.qualitative\.[A-Za-z0-9_]+',
+		'px.colors.qualitative.Plotly',
+		raw_code
+	)
 
-        else:
-            # re‑raise anything else
-            raise
-    except ValueError as e:
-        msg = str(e)
-        if "borderpad" in msg:
-            cleaned = re.sub(
-                r',?\s*borderpad\s*=\s*[^,)\s]+',
-                '',
-                raw_code
-            )
-            exec(cleaned,{}, local_vars)
-        else:
-            raise
+	df = pd.DataFrame(data)
+	local_vars = {'df': df, 'px': px}
 
-    if 'fig' not in local_vars:
-        raise RuntimeError("Generated code must define a `fig` named variable.")
+	# extremely minimal builtins allowlist to keep px happy when user code calls len/int/str
+	sandbox_builtins = {
+		'len': len, 'min': min, 'max': max,
+		'abs': abs, 'float': float, 'int': int, 'str': str,
+		'list': list, 'dict': dict, 'sum': sum, 'round': round
+	}
+	sandbox_globals = {'__builtins__': sandbox_builtins}
 
-    return pio.to_json(local_vars['fig'])
+	try:
+		exec(raw_code, sandbox_globals, local_vars)
+
+	except TypeError as e:
+		err = str(e)
+
+		# 1) marker_size fallback (from before)
+		if "marker_size" in err:
+			fixed = re.sub(
+				r'marker_size\s*=\s*([^,\)\s]+)',
+				r'marker=dict(size=\1)',
+				raw_code
+			)
+			print("[exec] applied marker_size fallback")
+			exec(fixed, sandbox_globals, local_vars)
+		
+		# 2) xbins fallback
+		elif "xbins" in err:
+			# strip out any xbins={...}
+			stripped = re.sub(
+				r',?\s*xbins\s*=\s*\{[^}]*\}',
+				'',
+				raw_code
+			)
+			print("[exec] stripped xbins from code")
+			exec(stripped, sandbox_globals, local_vars)
+
+		else:
+			# re‑raise anything else
+			raise
+	except ValueError as e:
+		msg = str(e)
+		if "borderpad" in msg:
+			cleaned = re.sub(
+				r',?\s*borderpad\s*=\s*[^,)\s]+',
+				'',
+				raw_code
+			)
+			print("[exec] removed borderpad from code")
+			exec(cleaned, sandbox_globals, local_vars)
+		else:
+			raise
+
+	if 'fig' not in local_vars:
+		raise RuntimeError("Generated code must define a `fig` named variable.")
+
+	return pio.to_json(local_vars['fig'])
 
 

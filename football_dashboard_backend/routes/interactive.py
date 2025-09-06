@@ -47,17 +47,30 @@ def interactive():
         t1 = time.time()
         plotly_code = generate_code(spec)
         print("LLM Code Generation time:", time.time() - t1)
+        # debug preview of generated code
+        try:
+            _code_str = str(plotly_code)
+            print("[interactive] code length:", len(_code_str))
+            print("[interactive] code preview:\n", _code_str[:300])
+        except Exception:
+            pass
 
         # 4. Execute that code on the server to produce Plotly JSON
         t2 = time.time()
-        plotly_json = execute_plotly_code(data, plotly_code)
+        plotly_json = None
+        try:
+            plotly_json = execute_plotly_code(data, plotly_code)
+        except Exception as exec_err:
+            # Log and continue; frontend can render Vega-Lite directly
+            print("Plotly execution skipped:", str(exec_err))
         print("LLM code execution time:", time.time() - t2)
 
         # 5. Return everything to the frontend
         resp = {
         "spec": spec,
         "code": plotly_code,
-        "plotly_json": plotly_json
+        "plotly_json": plotly_json,
+        "data": data
         }
 
     # 4) Store in Redis

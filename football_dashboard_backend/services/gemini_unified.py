@@ -198,7 +198,6 @@ def generate_code(spec: dict) -> str:
     )
 
     raw = response.text
-    print(raw)
     if not raw:
         raise RuntimeError("Empty code response from Gemini")
 

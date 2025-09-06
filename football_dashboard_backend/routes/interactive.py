@@ -19,7 +19,8 @@ CACHE_TTL = int(os.getenv("CACHE_TTL_SEC", 86400))
 # bump this whenever you update your prompts to invalidate old cache
 PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
 
-@interactive_bp.route("/", methods=["POST"])
+@interactive_bp.route("", methods=["POST"])  # accept /interactive without trailing slash
+@interactive_bp.route("/", methods=["POST"])  # existing
 def interactive():
     # 1. Validate input
     print("🔥  /interactive/ hit with payload:", request.json)
@@ -32,8 +33,12 @@ def interactive():
     hash_input = f"{PROMPT_VERSION}:{user_query}".encode("utf-8")
     key = "resp:" + hashlib.sha256(hash_input).hexdigest()
 
-    # 2) Try Redis hit
-    cached = current_app.redis_client.get(key)
+    # 2) Try Redis hit (guarded)
+    try:
+        cached = current_app.redis_client.get(key)
+    except Exception as cache_err:
+        print("Redis unavailable (get):", str(cache_err))
+        cached = None
     if cached:
         # saved as JSON string
         return jsonify(json.loads(cached)), 200
@@ -73,8 +78,11 @@ def interactive():
         "data": data
         }
 
-    # 4) Store in Redis
-        current_app.redis_client.set(key, json.dumps(resp), ex=CACHE_TTL)
+    # 4) Store in Redis (guarded)
+        try:
+            current_app.redis_client.set(key, json.dumps(resp), ex=CACHE_TTL)
+        except Exception as cache_err:
+            print("Redis unavailable (set):", str(cache_err))
 
         return jsonify(resp), 200
 

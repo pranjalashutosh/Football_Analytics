@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, jsonify
 import os
 from flask_cors import CORS
 from routes.interactive import interactive_bp
@@ -24,6 +24,15 @@ app.redis_client = redis_client
 #app.register_blueprint(viz_bp, url_prefix="/visualize")
 
 app.register_blueprint(interactive_bp, url_prefix="/interactive")
+
+# Health and home endpoints for liveness checks
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"status": "ok", "service": "football_backend"}), 200
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    return "ok", 200
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, port=5000)

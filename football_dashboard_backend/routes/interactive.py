@@ -23,11 +23,15 @@ PROMPT_VERSION = os.getenv("PROMPT_VERSION", "v1")
 @interactive_bp.route("/", methods=["POST"])  # existing
 def interactive():
     # 1. Validate input
-    print("🔥  /interactive/ hit with payload:", request.json)
+    print("🔥  /interactive/ hit with payload:", request.data)
     start = time.time()
-    user_query = request.json.get("nl")
-    if not user_query:
-        return jsonify({"error": "Missing 'nl' in request body"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    user_query = payload.get("nl")
+
+    if not isinstance(user_query, str) or not user_query.strip():
+        return jsonify({"error": "Body must be JSON with non-empty 'nl' string"}), 400
+    user_query = user_query.strip()
     
         # 1) Build a cache key: version + SHA‑256 of the query
     hash_input = f"{PROMPT_VERSION}:{user_query}".encode("utf-8")
